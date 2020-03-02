@@ -1,0 +1,265 @@
+---
+title: "GermanData"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+German Credit Data
+
+Introduction:
+
+The German credit scoring data consists of data of 1000 individuals and on the basis of predictors individuals are identified as to whether they'll default or not. The dependent variable in here is the last column,response. It classified as 0 and 1, 0 being the person wont default (good) and 1 being the person would default (bad). The optimum probability or pcut in this case is given to us as 1/6 (equivalent to 5:1 asymmetric cost).
+
+Approach: 
+
+Initially,exploratory data analysis on the dataset has been performed.
+A seed is set to 13433497 and the data is split into 70% training set and 30% test data.
+A logistic regression is then built for response and its predictors.
+Further we select variables using AIC, BIC (backward approach) & Lasso Variable selection.
+On the basis of pcut, for in sample & out of sample predictions we the generate ROC curve, AUC and misclassification rates.
+
+Conclusion:
+The misclassification rate for out of sample prediction is 39.66% which is very close to the expected misclassification rate of 39.85% for insample prediction
+Also, the AUC are both close i.e 79% and 76% each which is above the industry standard of 70% and hence a decent value.
+
+```{r}
+#Setup libraries
+library(ggplot2)
+library(ROCR)
+library(glmnet)
+library(PRROC)
+```
+
+```{r}
+#Data Initialization
+german_credit = read.table("http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data")
+head(german_credit,10)
+
+colnames(german_credit)=c("chk_acct","duration","credit_his","purpose","amount","saving_acct","present_emp","installment_rate","sex","other_debtor","present_resid","property","age","other_install","housing","n_credits","job","n_people","telephone","foreign","response")
+
+#orginal response coding 1= good, 2 = bad
+#we need 0 = good, 1 = bad
+german_credit$response = german_credit$response - 1
+```
+EDA
+
+EDA - Statistical Summary
+
+The german credit data was renamed with approriate variables and it has 21 variables. Out of those 13 being factors and 8 being numeric variables. The dependent variable, response is binary in nature.
+
+```{r}
+str(german_credit)
+summary(german_credit)
+```
+
+EDA - Numeric Variables
+
+The following insights are obtained from the EDA of numeric variables:
+
+For smaller durations it seems safe to say that they are associated with good credit unlike longer durations which tend to gravitate towards risky defaulters.
+In general, the amount for defaulting is greater and more spread out compared to people not defaulting.
+For the age variable it can be seen that younger people have more chances to default than others and hence they are riskier.
+```{r}
+ggplot(german_credit,aes(x=duration, fill=as.factor(german_credit$response))) + geom_density(alpha=.5) +labs(y= "Density", x = "Duration", fill = "Response")
+
+ggplot(german_credit,aes(x=amount, fill=as.factor(german_credit$response))) + geom_density(alpha=.5) +labs(y= "Density", x = "Amount", fill = "Response")
+
+ggplot(german_credit,aes(x=age, fill=as.factor(german_credit$response))) + geom_density(alpha=.5) +labs(y= "Density", x = "Age", fill = "Response")
+```
+
+EDA - Categorical Variables
+
+The following insights are derived from EDA of categorical variables:
+
+For chk_acct we see that, A11 has higher chances of default and A14 has the least chances of default. Also A14 has the least chances of default.
+
+For credit_his, it is seen that for A32 the number of defaulters would be more significantly compared to others.
+
+For the purpose variable, we see that A40, A42, A43 are riskier as defaulters.
+
+Overall these seem like the significant variables.
+```{r}
+ggplot(german_credit, aes(chk_acct, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") + labs(fill = "Response")
+ggplot(german_credit, aes(credit_his, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+ggplot(german_credit, aes(purpose, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+ggplot(german_credit, aes(saving_acct, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge")+labs(fill = "Response")
+ggplot(german_credit, aes(other_debtor, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+ggplot(german_credit, aes(sex, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+ggplot(german_credit, aes(other_install, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+ggplot(german_credit, aes(foreign, ..count..)) + 
+  geom_bar(aes(fill = as.factor(german_credit$response)), position = "dodge") +labs(fill = "Response")
+```
+
+Part (i) 
+
+Random sample a training data set that contains 70% of original data points.
+```{r}
+set.seed(13437885)
+index <- sample(nrow(german_credit), nrow(german_credit)*0.7)
+german.train <- german_credit[index,]
+german.test <-  german_credit[-index,]
+```
+
+Find a best model for Credit Scoring data using logistic regression with AIC and BIC.
+
+For a full logistic model,the following values are significant with the interpretation based on p values:
+Checking account
+Credit History
+Purpose
+Saving Account
+Installment Rate
+Duration
+Amount
+Present_emp
+
+Logistic Regression Full Model
+```{r}
+german.glm0 <- glm(response~., family = binomial, data = german.train)
+summary(german.glm0)
+
+german.glm0$deviance
+AIC(german.glm0)
+BIC(german.glm0)
+```
+
+Stepwise Variable selection using AIC
+
+Using AIC criterion for backward selection, the folliwng predictors turn out to be significant:
+chk_acct
+duration
+credit_his
+purpose
+amount
+saving_acct
+present_emp
+installment_rate
+sex
+housing
+telephone
+foreign
+
+```{r}
+#Backward AIC
+german.glm0.aic <- step(german.glm0, direction = "backward")
+summary(german.glm0.aic)
+german.glm0.aic$deviance
+AIC(german.glm0.aic)
+BIC(german.glm0.aic)
+```
+
+Using BIC criterion, for backward selection, the folliwng predictors turn out to be significant:
+Chk_acct
+Duration
+
+```{r}
+#Backward BIC
+german.glm0.bic <- step(german.glm0, k = log(nrow(german.train)), direction = "backward")
+summary(german.glm0.bic)
+german.glm0.aic$deviance
+AIC(german.glm0.bic)
+BIC(german.glm0.bic)
+```
+To check variable importance:
+```{r}
+drop1(german.glm0, test ="Chi") #this gives us significant variables & their importance
+```
+
+LASSO Variable Selection
+```{r}
+#Lasso Variable Selection
+dummy<- model.matrix(~ ., data = german_credit)
+german.data.lasso<- data.frame(dummy[,-1])
+german.train.X = as.matrix(select(german.data.lasso, -response)[index,])
+german.test.X = as.matrix(select(german.data.lasso, -response)[-index,])
+german.train.Y = german.data.lasso[index, "response"]
+german.test.Y = german.data.lasso[-index, "response"]
+
+german.lasso<- glmnet(x=german.train.X, y=german.train.Y, family = "binomial")
+
+#Perform cross-validation to determine the shrinkage parameter. For logistc regression, we can specify type.measure="class" so that the CV error will be misclassification error.
+german.lasso.cv<- cv.glmnet(x=german.train.X, y=german.train.Y, family = "binomial", type.measure = "class")
+plot(german.lasso.cv)
+```
+
+```{r}
+#Get the coefficient with optimal λ
+german.lasso.cv$lambda.1se
+coef(german.lasso, s=german.lasso.cv$lambda.min)
+coef(german.lasso, s=german.lasso.cv$lambda.1se)
+```
+
+For the final German Credit model we use the following variables:
+chk_acct
+duration
+credit_his
+amount
+saving_acct
+installment_rate
+other_install
+
+```{r}
+german.glm.final <- glm(response ~ chk_acct + duration + credit_his + amount + saving_acct  + other_install + installment_rate, family = binomial, german.train)
+```
+
+Draw ROC curve,report the AUC, and present the misclassification rate table of your final model.
+
+pcut = 0.1667
+
+#In sample prediction
+
+A significant chunk of people in here are identified as defaulters when they are infact not. (ie 252). The model has a classification rate of 39.8% ie close to 40%. The model AUC is 79% with the industry standard by 70%, hence it is safe in terms of AUC.
+```{r}
+#ROC, AUC
+pred.german.glm.train <- predict(german.glm.final, type="response")
+pred <- prediction(german.glm.train, german.train$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+```{r}
+#Classification Result
+class.german.train<- (pred.german.glm.train>0.1667)*1
+table(german.train$response, class.german.train, dnn = c("True","Predicted"))
+
+#Misclassification Rate
+MR<- mean(german.train$response!= class.german.train)
+MR
+```
+
+#Out of Sample Prediction
+
+As seen from the pattern in our trading data, significant chunk of people in here are identified as defaulters when they are infact not. (ie 108). The model has a classification rate of 39.66% and is very close to misclassification of training. The model AUC is 76% slightly lower than our training auc.
+```{r}
+#ROC, AUC
+pred.german.glm.test <- predict(german.glm.final, newdata = german.test,type="response")
+pred <- prediction(german.glm.test, german.test$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+
+#Get the AUC
+unlist(slot(performance(pred, "auc"), "y.values"))
+```
+
+```{r}
+#Classification Result
+class.german.test<- (pred.german.glm.test>0.1667)*1
+table(german.test$response,class.german.test, dnn = c("True","Predicted"))
+
+#Misclassification Rate
+MR<- mean(german.test$response!= class.german.test)
+MR
+```
+
